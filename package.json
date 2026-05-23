@@ -2,14 +2,25 @@
   "name": "gitshelve",
   "displayName": "Git Shelve — IntelliJ-style stash",
   "description": "IntelliJ-style shelve for Git. A stash alternative that stores uncommitted changes as patches and shows them under the Source Control panel.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "rsemihkoca",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["SCM Providers"],
-  "keywords": ["shelve", "stash", "git stash", "intellij", "shelf", "patch", "source control", "scm"],
+  "categories": [
+    "SCM Providers"
+  ],
+  "keywords": [
+    "shelve",
+    "stash",
+    "git stash",
+    "intellij",
+    "shelf",
+    "patch",
+    "source control",
+    "scm"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/rsemihkoca/gitshelve.git"
@@ -28,27 +39,79 @@
       ]
     },
     "commands": [
-      { "command": "gitshelve.shelve", "title": "Shelve Changes", "icon": "$(archive)" },
-      { "command": "gitshelve.unshelve", "title": "Unshelve", "icon": "$(arrow-down)" },
-      { "command": "gitshelve.delete", "title": "Delete Shelf", "icon": "$(trash)" },
-      { "command": "gitshelve.openFile", "title": "Open Shelved Diff" },
-      { "command": "gitshelve.refresh", "title": "Refresh", "icon": "$(refresh)" }
+      {
+        "command": "gitshelve.shelve",
+        "title": "Shelve Changes",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "gitshelve.unshelve",
+        "title": "Unshelve",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "gitshelve.delete",
+        "title": "Delete Shelf",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gitshelve.openFile",
+        "title": "Open Shelved Diff"
+      },
+      {
+        "command": "gitshelve.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      }
     ],
     "menus": {
       "commandPalette": [
-        { "command": "gitshelve.unshelve", "when": "false" },
-        { "command": "gitshelve.delete", "when": "false" },
-        { "command": "gitshelve.openFile", "when": "false" }
+        {
+          "command": "gitshelve.unshelve",
+          "when": "false"
+        },
+        {
+          "command": "gitshelve.delete",
+          "when": "false"
+        },
+        {
+          "command": "gitshelve.openFile",
+          "when": "false"
+        }
       ],
       "view/title": [
-        { "command": "gitshelve.shelve", "when": "view == gitshelveView", "group": "navigation@1" },
-        { "command": "gitshelve.refresh", "when": "view == gitshelveView", "group": "navigation@2" }
+        {
+          "command": "gitshelve.shelve",
+          "when": "view == gitshelveView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitshelve.refresh",
+          "when": "view == gitshelveView",
+          "group": "navigation@2"
+        }
       ],
       "view/item/context": [
-        { "command": "gitshelve.unshelve", "when": "view == gitshelveView && viewItem == shelf", "group": "inline@1" },
-        { "command": "gitshelve.delete", "when": "view == gitshelveView && viewItem == shelf", "group": "inline@2" },
-        { "command": "gitshelve.unshelve", "when": "view == gitshelveView && viewItem == shelf", "group": "1_actions@1" },
-        { "command": "gitshelve.delete", "when": "view == gitshelveView && viewItem == shelf", "group": "9_danger@1" }
+        {
+          "command": "gitshelve.unshelve",
+          "when": "view == gitshelveView && viewItem == shelf",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitshelve.delete",
+          "when": "view == gitshelveView && viewItem == shelf",
+          "group": "inline@2"
+        },
+        {
+          "command": "gitshelve.unshelve",
+          "when": "view == gitshelveView && viewItem == shelf",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "gitshelve.delete",
+          "when": "view == gitshelveView && viewItem == shelf",
+          "group": "9_danger@1"
+        }
       ]
     }
   },

@@ -9,6 +9,8 @@ node_modules/**
 !node_modules/.bin/
 *.vsix
 .git/**
+.claude/**
+scripts/**
 package-lock.json
 dsdfsdf
 jjh
