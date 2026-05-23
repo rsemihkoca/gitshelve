@@ -8,43 +8,90 @@ const SHELF_DIR = '.vscode/shelves';
 class ShelfItem extends vscode.TreeItem {
   constructor(
     public readonly name: string,
-    public readonly patchPath: string,
+    public readonly shelfDir: string,
     public readonly mtime: Date
   ) {
-    super(name, vscode.TreeItemCollapsibleState.None);
+    super(name, vscode.TreeItemCollapsibleState.Collapsed);
     this.contextValue = 'shelf';
     this.description = mtime.toLocaleString();
-    this.tooltip = `${name}\n${patchPath}`;
+    this.tooltip = `${name}\n${shelfDir}`;
     this.iconPath = new vscode.ThemeIcon('archive');
-    this.command = { command: 'gitshelve.diff', title: 'View Diff', arguments: [this] };
   }
 }
 
-class ShelfProvider implements vscode.TreeDataProvider<ShelfItem> {
+class ShelfFileItem extends vscode.TreeItem {
+  constructor(
+    public readonly shelfDir: string,
+    public readonly relPath: string
+  ) {
+    super(path.basename(relPath), vscode.TreeItemCollapsibleState.None);
+    this.contextValue = 'shelfFile';
+    const dir = path.dirname(relPath);
+    this.description = dir === '.' ? '' : dir;
+    this.tooltip = relPath;
+    this.resourceUri = vscode.Uri.file(path.join(shelfDir, 'after', relPath));
+    this.command = {
+      command: 'gitshelve.openFile',
+      title: 'Open Shelved Diff',
+      arguments: [this]
+    };
+  }
+}
+
+type TreeNode = ShelfItem | ShelfFileItem;
+
+class ShelfProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChange.event;
 
   refresh() { this._onDidChange.fire(); }
 
-  getTreeItem(el: ShelfItem) { return el; }
+  getTreeItem(el: TreeNode) { return el; }
 
-  async getChildren(): Promise<ShelfItem[]> {
+  async getChildren(element?: TreeNode): Promise<TreeNode[]> {
     const root = workspaceRoot();
     if (!root) return [];
-    const dir = path.join(root, SHELF_DIR);
-    if (!fs.existsSync(dir)) return [];
-    const files = await fs.promises.readdir(dir);
-    const items = await Promise.all(
-      files
-        .filter(f => f.endsWith('.patch'))
-        .map(async f => {
-          const full = path.join(dir, f);
-          const stat = await fs.promises.stat(full);
-          return new ShelfItem(f.replace(/\.patch$/, ''), full, stat.mtime);
-        })
-    );
-    return items.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+    if (!element) {
+      const dir = path.join(root, SHELF_DIR);
+      if (!fs.existsSync(dir)) return [];
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      const items: ShelfItem[] = [];
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const full = path.join(dir, e.name);
+        if (!fs.existsSync(path.join(full, 'changes.patch'))) continue;
+        const stat = await fs.promises.stat(full);
+        items.push(new ShelfItem(e.name, full, stat.mtime));
+      }
+      return items.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    }
+
+    if (element instanceof ShelfItem) {
+      const afterDir = path.join(element.shelfDir, 'after');
+      if (!fs.existsSync(afterDir)) return [];
+      const files = await listFilesRecursive(afterDir, '');
+      return files
+        .sort((a, b) => a.localeCompare(b))
+        .map(f => new ShelfFileItem(element.shelfDir, f));
+    }
+
+    return [];
   }
+}
+
+async function listFilesRecursive(dir: string, prefix: string): Promise<string[]> {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  const results: string[] = [];
+  for (const e of entries) {
+    const rel = prefix ? path.posix.join(prefix, e.name) : e.name;
+    if (e.isDirectory()) {
+      results.push(...await listFilesRecursive(path.join(dir, e.name), rel));
+    } else {
+      results.push(rel);
+    }
+  }
+  return results;
 }
 
 function workspaceRoot(): string | undefined {
@@ -66,10 +113,46 @@ function execGit(args: string[], cwd: string): Promise<string> {
   });
 }
 
+function execGitBuffer(args: string[], cwd: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const proc = cp.spawn('git', args, { cwd });
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    proc.stdout.on('data', (d: Buffer) => chunks.push(d));
+    proc.stderr.on('data', d => (stderr += d.toString()));
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) resolve(Buffer.concat(chunks));
+      else reject(new Error(stderr.trim() || `git ${args.join(' ')} exited ${code}`));
+    });
+  });
+}
+
 function timestamp(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
+
+async function snapshotFile(root: string, relPath: string, beforeDir: string, afterDir: string) {
+  const beforePath = path.join(beforeDir, relPath);
+  const afterPath = path.join(afterDir, relPath);
+  await fs.promises.mkdir(path.dirname(beforePath), { recursive: true });
+  await fs.promises.mkdir(path.dirname(afterPath), { recursive: true });
+
+  try {
+    const beforeContent = await execGitBuffer(['show', `:${relPath}`], root);
+    await fs.promises.writeFile(beforePath, beforeContent);
+  } catch {
+    await fs.promises.writeFile(beforePath, '');
+  }
+
+  try {
+    const content = await fs.promises.readFile(path.join(root, relPath));
+    await fs.promises.writeFile(afterPath, content);
+  } catch {
+    await fs.promises.writeFile(afterPath, '');
+  }
 }
 
 async function shelve(provider: ShelfProvider) {
@@ -77,32 +160,44 @@ async function shelve(provider: ShelfProvider) {
   if (!root) { vscode.window.showErrorMessage('No workspace open'); return; }
 
   let diff: string;
+  let fileList: string;
   try {
-    diff = await execGit(['diff', 'HEAD', '--binary'], root);
+    diff = await execGit(['diff', '--binary'], root);
+    fileList = await execGit(['diff', '--name-only'], root);
   } catch (e: any) {
     vscode.window.showErrorMessage(`git diff failed: ${e.message}`);
     return;
   }
   if (!diff.trim()) {
-    vscode.window.showInformationMessage('No changes to shelve');
+    vscode.window.showInformationMessage('No unstaged changes to shelve');
     return;
   }
 
-  const dir = path.join(root, SHELF_DIR);
-  await fs.promises.mkdir(dir, { recursive: true });
+  const files = fileList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+
+  const shelvesDir = path.join(root, SHELF_DIR);
+  await fs.promises.mkdir(shelvesDir, { recursive: true });
 
   const base = `changes-${timestamp()}`;
-  let patchPath = path.join(dir, `${base}.patch`);
+  let shelfDir = path.join(shelvesDir, base);
   let i = 2;
-  while (fs.existsSync(patchPath)) {
-    patchPath = path.join(dir, `${base}-${i}.patch`);
+  while (fs.existsSync(shelfDir)) {
+    shelfDir = path.join(shelvesDir, `${base}-${i}`);
     i++;
   }
+  const beforeDir = path.join(shelfDir, 'before');
+  const afterDir = path.join(shelfDir, 'after');
+  await fs.promises.mkdir(beforeDir, { recursive: true });
+  await fs.promises.mkdir(afterDir, { recursive: true });
 
-  await fs.promises.writeFile(patchPath, diff);
+  for (const f of files) {
+    await snapshotFile(root, f, beforeDir, afterDir);
+  }
+
+  await fs.promises.writeFile(path.join(shelfDir, 'changes.patch'), diff);
 
   try {
-    await execGit(['checkout', 'HEAD', '--', '.'], root);
+    await execGit(['checkout', '--', '.'], root);
   } catch (e: any) {
     vscode.window.showWarningMessage(`Shelf saved but revert failed: ${e.message}`);
     provider.refresh();
@@ -110,14 +205,15 @@ async function shelve(provider: ShelfProvider) {
   }
 
   provider.refresh();
-  vscode.window.showInformationMessage(`Shelved: ${path.basename(patchPath, '.patch')}`);
+  vscode.window.showInformationMessage(`Shelved: ${path.basename(shelfDir)}`);
 }
 
 async function unshelve(item: ShelfItem, provider: ShelfProvider) {
   const root = workspaceRoot();
   if (!root) return;
+  const patchPath = path.join(item.shelfDir, 'changes.patch');
   try {
-    await execGit(['apply', '--3way', item.patchPath], root);
+    await execGit(['apply', '--3way', patchPath], root);
     vscode.window.showInformationMessage(`Unshelved: ${item.name}`);
     provider.refresh();
   } catch (e: any) {
@@ -132,13 +228,15 @@ async function deleteShelf(item: ShelfItem, provider: ShelfProvider) {
     'Delete'
   );
   if (ok !== 'Delete') return;
-  await fs.promises.unlink(item.patchPath);
+  await fs.promises.rm(item.shelfDir, { recursive: true, force: true });
   provider.refresh();
 }
 
-async function showDiff(item: ShelfItem) {
-  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(item.patchPath));
-  await vscode.window.showTextDocument(doc, { preview: true });
+async function openShelvedFile(item: ShelfFileItem) {
+  const beforeUri = vscode.Uri.file(path.join(item.shelfDir, 'before', item.relPath));
+  const afterUri = vscode.Uri.file(path.join(item.shelfDir, 'after', item.relPath));
+  const title = `${path.basename(item.relPath)} (Shelved)`;
+  await vscode.commands.executeCommand('vscode.diff', beforeUri, afterUri, title);
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
@@ -148,14 +246,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gitshelve.shelve', () => shelve(provider)),
     vscode.commands.registerCommand('gitshelve.unshelve', (item: ShelfItem) => unshelve(item, provider)),
     vscode.commands.registerCommand('gitshelve.delete', (item: ShelfItem) => deleteShelf(item, provider)),
-    vscode.commands.registerCommand('gitshelve.diff', (item: ShelfItem) => showDiff(item)),
+    vscode.commands.registerCommand('gitshelve.openFile', (item: ShelfFileItem) => openShelvedFile(item)),
     vscode.commands.registerCommand('gitshelve.refresh', () => provider.refresh())
   );
 
   const root = workspaceRoot();
   if (root) {
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(root, `${SHELF_DIR}/*.patch`)
+      new vscode.RelativePattern(root, `${SHELF_DIR}/**`)
     );
     watcher.onDidCreate(() => provider.refresh());
     watcher.onDidDelete(() => provider.refresh());
