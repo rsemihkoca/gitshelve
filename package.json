@@ -2,7 +2,7 @@
   "name": "gitshelve",
   "displayName": "Git Shelve — IntelliJ-style stash",
   "description": "IntelliJ-style shelve for Git. A stash alternative that stores uncommitted changes as patches and shows them under the Source Control panel.",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "rsemihkoca",
   "license": "MIT",
   "icon": "media/extension-icon.png",
@@ -42,12 +42,6 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "gitshelveView",
-        "contents": "No shelves yet.\n[Shelve Changes](command:gitshelve.shelve)\n\nThis will save your unstaged changes as a shelf and revert the working tree. Staged changes are left untouched."
-      }
-    ],
     "commands": [
       {
         "command": "gitshelve.shelve",
