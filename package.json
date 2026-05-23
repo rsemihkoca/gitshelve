@@ -21,7 +21,9 @@
         {
           "id": "gitshelveView",
           "name": "Shelf",
-          "icon": "$(archive)"
+          "icon": "$(archive)",
+          "order": 0,
+          "visibility": "visible"
         }
       ]
     },
