@@ -155,25 +155,43 @@ async function snapshotFile(root: string, relPath: string, beforeDir: string, af
   }
 }
 
+async function snapshotUntracked(root: string, relPath: string, beforeDir: string, afterDir: string) {
+  const beforePath = path.join(beforeDir, relPath);
+  const afterPath = path.join(afterDir, relPath);
+  await fs.promises.mkdir(path.dirname(beforePath), { recursive: true });
+  await fs.promises.mkdir(path.dirname(afterPath), { recursive: true });
+  await fs.promises.writeFile(beforePath, '');
+  try {
+    const content = await fs.promises.readFile(path.join(root, relPath));
+    await fs.promises.writeFile(afterPath, content);
+  } catch {
+    await fs.promises.writeFile(afterPath, '');
+  }
+}
+
 async function shelve(provider: ShelfProvider) {
   const root = workspaceRoot();
   if (!root) { vscode.window.showErrorMessage('No workspace open'); return; }
 
   let diff: string;
-  let fileList: string;
+  let trackedList: string;
+  let untrackedList: string;
   try {
     diff = await execGit(['diff', '--binary'], root);
-    fileList = await execGit(['diff', '--name-only'], root);
+    trackedList = await execGit(['diff', '--name-only'], root);
+    untrackedList = await execGit(['ls-files', '--others', '--exclude-standard'], root);
   } catch (e: any) {
-    vscode.window.showErrorMessage(`git diff failed: ${e.message}`);
-    return;
-  }
-  if (!diff.trim()) {
-    vscode.window.showInformationMessage('No unstaged changes to shelve');
+    vscode.window.showErrorMessage(`git failed: ${e.message}`);
     return;
   }
 
-  const files = fileList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+  const tracked = trackedList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+  const untracked = untrackedList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+
+  if (!diff.trim() && untracked.length === 0) {
+    vscode.window.showInformationMessage('No changes to shelve');
+    return;
+  }
 
   const shelvesDir = path.join(root, SHELF_DIR);
   await fs.promises.mkdir(shelvesDir, { recursive: true });
@@ -190,14 +208,26 @@ async function shelve(provider: ShelfProvider) {
   await fs.promises.mkdir(beforeDir, { recursive: true });
   await fs.promises.mkdir(afterDir, { recursive: true });
 
-  for (const f of files) {
+  for (const f of tracked) {
     await snapshotFile(root, f, beforeDir, afterDir);
+  }
+  for (const f of untracked) {
+    await snapshotUntracked(root, f, beforeDir, afterDir);
   }
 
   await fs.promises.writeFile(path.join(shelfDir, 'changes.patch'), diff);
+  await fs.promises.writeFile(
+    path.join(shelfDir, 'meta.json'),
+    JSON.stringify({ untracked }, null, 2)
+  );
 
   try {
-    await execGit(['checkout', '--', '.'], root);
+    if (tracked.length > 0) {
+      await execGit(['checkout', '--', '.'], root);
+    }
+    for (const f of untracked) {
+      try { await fs.promises.unlink(path.join(root, f)); } catch {}
+    }
   } catch (e: any) {
     vscode.window.showWarningMessage(`Shelf saved but revert failed: ${e.message}`);
     provider.refresh();
@@ -211,9 +241,34 @@ async function shelve(provider: ShelfProvider) {
 async function unshelve(item: ShelfItem, provider: ShelfProvider) {
   const root = workspaceRoot();
   if (!root) return;
+
   const patchPath = path.join(item.shelfDir, 'changes.patch');
+  const metaPath = path.join(item.shelfDir, 'meta.json');
+
+  let untracked: string[] = [];
   try {
-    await execGit(['apply', '--3way', patchPath], root);
+    const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf8'));
+    untracked = Array.isArray(meta.untracked) ? meta.untracked : [];
+  } catch {}
+
+  try {
+    const patchContent = await fs.promises.readFile(patchPath, 'utf8');
+    if (patchContent.trim()) {
+      await execGit(['apply', '--3way', patchPath], root);
+    }
+
+    for (const f of untracked) {
+      const src = path.join(item.shelfDir, 'after', f);
+      const dst = path.join(root, f);
+      if (fs.existsSync(dst)) {
+        vscode.window.showWarningMessage(`Skipped (already exists): ${f}`);
+        continue;
+      }
+      await fs.promises.mkdir(path.dirname(dst), { recursive: true });
+      const content = await fs.promises.readFile(src);
+      await fs.promises.writeFile(dst, content);
+    }
+
     vscode.window.showInformationMessage(`Unshelved: ${item.name}`);
     provider.refresh();
   } catch (e: any) {
