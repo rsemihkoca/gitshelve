@@ -7,14 +7,14 @@ const SHELF_DIR = '.vscode/shelves';
 
 class ShelfItem extends vscode.TreeItem {
   constructor(
-    public readonly name: string,
+    public readonly dirName: string,
     public readonly shelfDir: string,
     public readonly mtime: Date
   ) {
-    super(name, vscode.TreeItemCollapsibleState.Collapsed);
+    super('Changes', vscode.TreeItemCollapsibleState.Collapsed);
     this.contextValue = 'shelf';
-    this.description = mtime.toLocaleString();
-    this.tooltip = `${name}\n${shelfDir}`;
+    this.description = formatTime(mtime);
+    this.tooltip = `Changes — ${mtime.toLocaleString()}`;
     this.iconPath = new vscode.ThemeIcon('archive');
   }
 }
@@ -134,6 +134,18 @@ function timestamp(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 }
 
+function formatTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function ensureShelvesIgnored(shelvesDir: string) {
+  const gi = path.join(shelvesDir, '.gitignore');
+  if (!fs.existsSync(gi)) {
+    await fs.promises.writeFile(gi, '*\n');
+  }
+}
+
 async function snapshotFile(root: string, relPath: string, beforeDir: string, afterDir: string) {
   const beforePath = path.join(beforeDir, relPath);
   const afterPath = path.join(afterDir, relPath);
@@ -195,6 +207,7 @@ async function shelve(provider: ShelfProvider) {
 
   const shelvesDir = path.join(root, SHELF_DIR);
   await fs.promises.mkdir(shelvesDir, { recursive: true });
+  await ensureShelvesIgnored(shelvesDir);
 
   const base = `changes-${timestamp()}`;
   let shelfDir = path.join(shelvesDir, base);
@@ -269,7 +282,7 @@ async function unshelve(item: ShelfItem, provider: ShelfProvider) {
       await fs.promises.writeFile(dst, content);
     }
 
-    vscode.window.showInformationMessage(`Unshelved: ${item.name}`);
+    vscode.window.showInformationMessage(`Unshelved: ${item.dirName}`);
     provider.refresh();
   } catch (e: any) {
     vscode.window.showErrorMessage(`Unshelve failed: ${e.message}`);
@@ -278,7 +291,7 @@ async function unshelve(item: ShelfItem, provider: ShelfProvider) {
 
 async function deleteShelf(item: ShelfItem, provider: ShelfProvider) {
   const ok = await vscode.window.showWarningMessage(
-    `Delete shelf "${item.name}"?`,
+    `Delete this shelf (${formatTime(item.mtime)})?`,
     { modal: true },
     'Delete'
   );

@@ -2,7 +2,7 @@
   "name": "gitshelve",
   "displayName": "Git Shelve — IntelliJ-style stash",
   "description": "IntelliJ-style shelve for Git. A stash alternative that stores uncommitted changes as patches and shows them under the Source Control panel.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "rsemihkoca",
   "license": "MIT",
   "engines": {
