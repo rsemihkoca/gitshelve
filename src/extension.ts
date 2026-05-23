@@ -66,8 +66,10 @@ function execGit(args: string[], cwd: string): Promise<string> {
   });
 }
 
-function sanitize(name: string): string {
-  return name.trim().replace(/[^a-zA-Z0-9-_ ]/g, '_').slice(0, 80);
+function timestamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 }
 
 async function shelve(provider: ShelfProvider) {
@@ -86,17 +88,10 @@ async function shelve(provider: ShelfProvider) {
     return;
   }
 
-  const name = await vscode.window.showInputBox({
-    prompt: 'Shelf name',
-    placeHolder: 'e.g. wip-login-fix',
-    validateInput: v => (v && sanitize(v).length > 0 ? null : 'Name required')
-  });
-  if (!name) return;
-
   const dir = path.join(root, SHELF_DIR);
   await fs.promises.mkdir(dir, { recursive: true });
 
-  let base = sanitize(name);
+  const base = `changes-${timestamp()}`;
   let patchPath = path.join(dir, `${base}.patch`);
   let i = 2;
   while (fs.existsSync(patchPath)) {
