@@ -106,88 +106,80 @@ async function snapshotUntracked(root: string, relPath: string, beforeDir: strin
   }
 }
 
-class ShelfRegistry implements vscode.Disposable {
-  private sc: vscode.SourceControl;
-  private groups = new Map<string, vscode.SourceControlResourceGroup>();
-  private mtimes = new Map<string, Date>();
-
-  constructor(rootUri: vscode.Uri) {
-    this.sc = vscode.scm.createSourceControl('gitshelve', 'Shelf', rootUri);
-    this.sc.inputBox.visible = false;
-    this.sc.inputBox.enabled = false;
-  }
-
-  async refresh() {
-    const root = workspaceRoot();
-    if (!root) return;
-    const dir = path.join(root, SHELF_DIR);
-
-    for (const group of this.groups.values()) group.dispose();
-    this.groups.clear();
-    this.mtimes.clear();
-
-    if (!fs.existsSync(dir)) {
-      this.sc.count = 0;
-      return;
-    }
-
-    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    const shelves: { name: string; mtime: Date }[] = [];
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const full = path.join(dir, e.name);
-      if (!fs.existsSync(path.join(full, 'changes.patch'))) continue;
-      const stat = await fs.promises.stat(full);
-      shelves.push({ name: e.name, mtime: stat.mtime });
-    }
-    shelves.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-    for (const shelf of shelves) {
-      const shelfDir = path.join(dir, shelf.name);
-      const label = `Changes — ${formatTime(shelf.mtime)}`;
-      const group = this.sc.createResourceGroup(shelf.name, label);
-      group.hideWhenEmpty = false;
-
-      const afterDir = path.join(shelfDir, 'after');
-      const files = fs.existsSync(afterDir) ? await listFilesRecursive(afterDir, '') : [];
-
-      group.resourceStates = files.map(f => ({
-        resourceUri: vscode.Uri.file(path.join(afterDir, f)),
-        command: {
-          command: 'gitshelve.openFile',
-          title: 'Open Shelved Diff',
-          arguments: [shelfDir, f]
-        },
-        decorations: {
-          tooltip: f
-        }
-      }));
-
-      this.groups.set(shelf.name, group);
-      this.mtimes.set(shelf.name, shelf.mtime);
-    }
-
-    this.sc.count = shelves.length;
-  }
-
-  shelfDirFromGroup(group: vscode.SourceControlResourceGroup): string | undefined {
-    const root = workspaceRoot();
-    if (!root) return undefined;
-    if (!this.groups.has(group.id)) return undefined;
-    return path.join(root, SHELF_DIR, group.id);
-  }
-
-  mtimeFromGroup(group: vscode.SourceControlResourceGroup): Date | undefined {
-    return this.mtimes.get(group.id);
-  }
-
-  dispose() {
-    for (const group of this.groups.values()) group.dispose();
-    this.sc.dispose();
+class ShelfItem extends vscode.TreeItem {
+  constructor(
+    public readonly dirName: string,
+    public readonly shelfDir: string,
+    public readonly mtime: Date
+  ) {
+    super('Changes', vscode.TreeItemCollapsibleState.Collapsed);
+    this.contextValue = 'shelf';
+    this.description = formatTime(mtime);
+    this.tooltip = `Changes — ${mtime.toLocaleString()}`;
+    this.iconPath = new vscode.ThemeIcon('archive');
   }
 }
 
-async function shelve(registry: ShelfRegistry) {
+class ShelfFileItem extends vscode.TreeItem {
+  constructor(
+    public readonly shelfDir: string,
+    public readonly relPath: string
+  ) {
+    super(path.basename(relPath), vscode.TreeItemCollapsibleState.None);
+    this.contextValue = 'shelfFile';
+    this.tooltip = relPath;
+    this.resourceUri = vscode.Uri.file(path.join(shelfDir, 'after', relPath));
+    this.command = {
+      command: 'gitshelve.openFile',
+      title: 'Open Shelved Diff',
+      arguments: [shelfDir, relPath]
+    };
+  }
+}
+
+type TreeNode = ShelfItem | ShelfFileItem;
+
+class ShelfProvider implements vscode.TreeDataProvider<TreeNode> {
+  private _onDidChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this._onDidChange.event;
+
+  refresh() { this._onDidChange.fire(); }
+
+  getTreeItem(el: TreeNode) { return el; }
+
+  async getChildren(element?: TreeNode): Promise<TreeNode[]> {
+    const root = workspaceRoot();
+    if (!root) return [];
+
+    if (!element) {
+      const dir = path.join(root, SHELF_DIR);
+      if (!fs.existsSync(dir)) return [];
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      const items: ShelfItem[] = [];
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const full = path.join(dir, e.name);
+        if (!fs.existsSync(path.join(full, 'changes.patch'))) continue;
+        const stat = await fs.promises.stat(full);
+        items.push(new ShelfItem(e.name, full, stat.mtime));
+      }
+      return items.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    }
+
+    if (element instanceof ShelfItem) {
+      const afterDir = path.join(element.shelfDir, 'after');
+      if (!fs.existsSync(afterDir)) return [];
+      const files = await listFilesRecursive(afterDir, '');
+      return files
+        .sort((a, b) => a.localeCompare(b))
+        .map(f => new ShelfFileItem(element.shelfDir, f));
+    }
+
+    return [];
+  }
+}
+
+async function shelve(provider: ShelfProvider) {
   const root = workspaceRoot();
   if (!root) { vscode.window.showErrorMessage('No workspace open'); return; }
 
@@ -249,23 +241,20 @@ async function shelve(registry: ShelfRegistry) {
     }
   } catch (e: any) {
     vscode.window.showWarningMessage(`Shelf saved but revert failed: ${e.message}`);
-    await registry.refresh();
+    provider.refresh();
     return;
   }
 
-  await registry.refresh();
+  provider.refresh();
   vscode.window.showInformationMessage(`Shelved ${tracked.length + untracked.length} file(s)`);
 }
 
-async function unshelve(group: vscode.SourceControlResourceGroup | undefined, registry: ShelfRegistry) {
-  if (!group) return;
+async function unshelve(item: ShelfItem, provider: ShelfProvider) {
   const root = workspaceRoot();
   if (!root) return;
-  const shelfDir = registry.shelfDirFromGroup(group);
-  if (!shelfDir) return;
 
-  const patchPath = path.join(shelfDir, 'changes.patch');
-  const metaPath = path.join(shelfDir, 'meta.json');
+  const patchPath = path.join(item.shelfDir, 'changes.patch');
+  const metaPath = path.join(item.shelfDir, 'meta.json');
 
   let untracked: string[] = [];
   try {
@@ -280,7 +269,7 @@ async function unshelve(group: vscode.SourceControlResourceGroup | undefined, re
     }
 
     for (const f of untracked) {
-      const src = path.join(shelfDir, 'after', f);
+      const src = path.join(item.shelfDir, 'after', f);
       const dst = path.join(root, f);
       if (fs.existsSync(dst)) {
         vscode.window.showWarningMessage(`Skipped (already exists): ${f}`);
@@ -291,28 +280,24 @@ async function unshelve(group: vscode.SourceControlResourceGroup | undefined, re
       await fs.promises.writeFile(dst, content);
     }
 
-    const mtime = registry.mtimeFromGroup(group);
-    vscode.window.showInformationMessage(`Unshelved${mtime ? ` (${formatTime(mtime)})` : ''}`);
-    await registry.refresh();
+    await fs.promises.rm(item.shelfDir, { recursive: true, force: true });
+
+    vscode.window.showInformationMessage(`Unshelved (${formatTime(item.mtime)})`);
+    provider.refresh();
   } catch (e: any) {
     vscode.window.showErrorMessage(`Unshelve failed: ${e.message}`);
   }
 }
 
-async function deleteShelf(group: vscode.SourceControlResourceGroup | undefined, registry: ShelfRegistry) {
-  if (!group) return;
-  const shelfDir = registry.shelfDirFromGroup(group);
-  if (!shelfDir) return;
-  const mtime = registry.mtimeFromGroup(group);
-
+async function deleteShelf(item: ShelfItem, provider: ShelfProvider) {
   const ok = await vscode.window.showWarningMessage(
-    `Delete this shelf${mtime ? ` (${formatTime(mtime)})` : ''}?`,
+    `Delete this shelf (${formatTime(item.mtime)})?`,
     { modal: true },
     'Delete'
   );
   if (ok !== 'Delete') return;
-  await fs.promises.rm(shelfDir, { recursive: true, force: true });
-  await registry.refresh();
+  await fs.promises.rm(item.shelfDir, { recursive: true, force: true });
+  provider.refresh();
 }
 
 async function openShelvedFile(shelfDir?: string, relPath?: string) {
@@ -324,34 +309,31 @@ async function openShelvedFile(shelfDir?: string, relPath?: string) {
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
-  const root = workspaceRoot();
-  if (!root) return;
-
-  const registry = new ShelfRegistry(vscode.Uri.file(root));
-  ctx.subscriptions.push(registry);
-
+  const provider = new ShelfProvider();
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('gitshelve.shelve', () => shelve(registry)),
-    vscode.commands.registerCommand('gitshelve.unshelve', (g: vscode.SourceControlResourceGroup) => unshelve(g, registry)),
-    vscode.commands.registerCommand('gitshelve.delete', (g: vscode.SourceControlResourceGroup) => deleteShelf(g, registry)),
+    vscode.window.registerTreeDataProvider('gitshelveView', provider),
+    vscode.commands.registerCommand('gitshelve.shelve', () => shelve(provider)),
+    vscode.commands.registerCommand('gitshelve.unshelve', (item: ShelfItem) => unshelve(item, provider)),
+    vscode.commands.registerCommand('gitshelve.delete', (item: ShelfItem) => deleteShelf(item, provider)),
     vscode.commands.registerCommand('gitshelve.openFile', (shelfDir: string, relPath: string) => openShelvedFile(shelfDir, relPath)),
-    vscode.commands.registerCommand('gitshelve.refresh', () => registry.refresh())
+    vscode.commands.registerCommand('gitshelve.refresh', () => provider.refresh())
   );
 
-  registry.refresh();
-
-  const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(root, `${SHELF_DIR}/**`)
-  );
-  let refreshTimer: NodeJS.Timeout | undefined;
-  const scheduleRefresh = () => {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => registry.refresh(), 200);
-  };
-  watcher.onDidCreate(scheduleRefresh);
-  watcher.onDidDelete(scheduleRefresh);
-  watcher.onDidChange(scheduleRefresh);
-  ctx.subscriptions.push(watcher);
+  const root = workspaceRoot();
+  if (root) {
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(root, `${SHELF_DIR}/**`)
+    );
+    let refreshTimer: NodeJS.Timeout | undefined;
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => provider.refresh(), 200);
+    };
+    watcher.onDidCreate(scheduleRefresh);
+    watcher.onDidDelete(scheduleRefresh);
+    watcher.onDidChange(scheduleRefresh);
+    ctx.subscriptions.push(watcher);
+  }
 }
 
 export function deactivate() {}
