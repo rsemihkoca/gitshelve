@@ -16,7 +16,7 @@ class ShelfItem extends vscode.TreeItem {
     this.description = mtime.toLocaleString();
     this.tooltip = `${name}\n${patchPath}`;
     this.iconPath = new vscode.ThemeIcon('archive');
-    this.command = { command: 'gitstash.diff', title: 'View Diff', arguments: [this] };
+    this.command = { command: 'gitshelve.diff', title: 'View Diff', arguments: [this] };
   }
 }
 
@@ -149,12 +149,12 @@ async function showDiff(item: ShelfItem) {
 export function activate(ctx: vscode.ExtensionContext) {
   const provider = new ShelfProvider();
   ctx.subscriptions.push(
-    vscode.window.registerTreeDataProvider('gitstashShelves', provider),
-    vscode.commands.registerCommand('gitstash.shelve', () => shelve(provider)),
-    vscode.commands.registerCommand('gitstash.unshelve', (item: ShelfItem) => unshelve(item, provider)),
-    vscode.commands.registerCommand('gitstash.delete', (item: ShelfItem) => deleteShelf(item, provider)),
-    vscode.commands.registerCommand('gitstash.diff', (item: ShelfItem) => showDiff(item)),
-    vscode.commands.registerCommand('gitstash.refresh', () => provider.refresh())
+    vscode.window.registerTreeDataProvider('gitshelveView', provider),
+    vscode.commands.registerCommand('gitshelve.shelve', () => shelve(provider)),
+    vscode.commands.registerCommand('gitshelve.unshelve', (item: ShelfItem) => unshelve(item, provider)),
+    vscode.commands.registerCommand('gitshelve.delete', (item: ShelfItem) => deleteShelf(item, provider)),
+    vscode.commands.registerCommand('gitshelve.diff', (item: ShelfItem) => showDiff(item)),
+    vscode.commands.registerCommand('gitshelve.refresh', () => provider.refresh())
   );
 
   const root = workspaceRoot();
