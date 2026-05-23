@@ -2,7 +2,7 @@
   "name": "gitshelve",
   "displayName": "Git Shelve — IntelliJ-style stash",
   "description": "IntelliJ-style shelve for Git. A stash alternative that stores uncommitted changes as patches and shows them under the Source Control panel.",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "publisher": "rsemihkoca",
   "license": "MIT",
   "engines": {
@@ -26,41 +26,38 @@
     "url": "https://github.com/rsemihkoca/gitshelve.git"
   },
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
-    "views": {
-      "scm": [
-        {
-          "id": "gitshelveView",
-          "name": "Shelf",
-          "icon": "$(archive)",
-          "order": 0,
-          "visibility": "visible"
-        }
-      ]
-    },
     "commands": [
       {
         "command": "gitshelve.shelve",
         "title": "Shelve Changes",
+        "category": "Git Shelve",
         "icon": "$(archive)"
       },
       {
         "command": "gitshelve.unshelve",
         "title": "Unshelve",
+        "category": "Git Shelve",
         "icon": "$(arrow-down)"
       },
       {
         "command": "gitshelve.delete",
         "title": "Delete Shelf",
+        "category": "Git Shelve",
         "icon": "$(trash)"
       },
       {
         "command": "gitshelve.openFile",
-        "title": "Open Shelved Diff"
+        "title": "Open Shelved Diff",
+        "category": "Git Shelve"
       },
       {
         "command": "gitshelve.refresh",
         "title": "Refresh",
+        "category": "Git Shelve",
         "icon": "$(refresh)"
       }
     ],
@@ -79,37 +76,37 @@
           "when": "false"
         }
       ],
-      "view/title": [
+      "scm/title": [
         {
           "command": "gitshelve.shelve",
-          "when": "view == gitshelveView",
+          "when": "scmProvider == gitshelve",
           "group": "navigation@1"
         },
         {
           "command": "gitshelve.refresh",
-          "when": "view == gitshelveView",
+          "when": "scmProvider == gitshelve",
           "group": "navigation@2"
         }
       ],
-      "view/item/context": [
+      "scm/resourceGroup/context": [
         {
           "command": "gitshelve.unshelve",
-          "when": "view == gitshelveView && viewItem == shelf",
+          "when": "scmProvider == gitshelve",
           "group": "inline@1"
         },
         {
           "command": "gitshelve.delete",
-          "when": "view == gitshelveView && viewItem == shelf",
+          "when": "scmProvider == gitshelve",
           "group": "inline@2"
         },
         {
           "command": "gitshelve.unshelve",
-          "when": "view == gitshelveView && viewItem == shelf",
+          "when": "scmProvider == gitshelve",
           "group": "1_actions@1"
         },
         {
           "command": "gitshelve.delete",
-          "when": "view == gitshelveView && viewItem == shelf",
+          "when": "scmProvider == gitshelve",
           "group": "9_danger@1"
         }
       ]
